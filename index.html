@@ -133,6 +133,7 @@ function cargar() {
   if (!D) D = b;
   for (const k in b) if (D[k] === undefined) D[k] = b[k];
   D.cfg = {...b.cfg, ...D.cfg};
+  D.fijos.forEach(f => { if (!f.desde) f.desde = hoy(); });
 }
 function guardar() {
   try { localStorage.setItem(KEY, JSON.stringify(D)); return true; }
@@ -193,12 +194,13 @@ function estadoRegla(m) {
   return regla().map(([nom, ks, pct, tipo]) => { const usado = sum(ks, k => g[k] || 0), lim = base * pct / 100; return {nom, pct, tipo, usado:r2(usado), lim:r2(lim)}; });
 }
 function fijoPagado(f, m) { return D.movs.some(x => x.fijo === f.id && mesDe(x.fecha) === m); }
+function fijoAplica(f, m) { return fechaDia(m, f.dia) >= (f.desde || ''); }
 function avisos() {
   const out = [], m = mesHoy(), h = hoy();
   estadoRegla(m).forEach(e => { if (e.tipo === 'g' && e.lim > 0 && e.usado > e.lim) out.push(['bad', `Te pasaste ${M(e.usado - e.lim)} en ${e.nom} este mes.`]); });
   const g = gastoPorCat(m);
   Object.entries(D.presu).forEach(([c, lim]) => { if (n(lim) > 0 && (g[c] || 0) > n(lim)) out.push(['bad', `Presupuesto de ${c} superado: ${M(g[c])} de ${M(lim)}.`]); else if (n(lim) > 0 && (g[c] || 0) > n(lim) * 0.85) out.push(['', `Vas por el ${Math.round(g[c] / n(lim) * 100)}% del presupuesto de ${c}.`]); });
-  D.fijos.forEach(f => { if (fijoPagado(f, m)) return; const fd = fechaDia(m, f.dia), d = diasEntre(h, fd); if (d < 0) out.push(['bad', `${f.n} venció el ${fcorta(fd)} y no está marcado como pagado.`]); else if (d <= 5) out.push(['', `${f.n}: pagar ${M(f.monto, f.mon)} ${d === 0 ? 'hoy' : 'en ' + d + ' día(s)'}.`]); });
+  D.fijos.forEach(f => { if (fijoPagado(f, m) || !fijoAplica(f, m)) return; const fd = fechaDia(m, f.dia), d = diasEntre(h, fd); if (d < 0) out.push(['bad', `${f.n} venció el ${fcorta(fd)} y no está marcado como pagado.`]); else if (d <= 5) out.push(['', `${f.n}: pagar ${M(f.monto, f.mon)} ${d === 0 ? 'hoy' : 'en ' + d + ' día(s)'}.`]); });
   D.tarjetas.forEach(t => { if (!t.pago) return; let fd = fechaDia(m, t.pago); if (fd < h) fd = fechaDia(sumMes(m, 1), t.pago); const d = diasEntre(h, fd); if (d <= 5 && n(t.deuda) > 0) out.push(['', `Tarjeta ${t.n}: fecha de pago ${d === 0 ? 'hoy' : 'en ' + d + ' día(s)'} (${fcorta(fd)}).`]); });
   D.prios.filter(p => !p.hecho && p.limite && p.limite < h && mesDe(p.limite) <= m).forEach(p => out.push(['', `Prioridad pendiente vencida: ${p.n}.`]));
   if (D.movs.length && (!D.ultCopia || Date.now() - D.ultCopia > 7 * 86400000)) out.push(['', 'Haz una copia de seguridad: Más → Copia de seguridad.']);
@@ -222,7 +224,7 @@ function recomendar() {
   return {pct, nec, ing, r, txt};
 }
 function libreMes(m) {
-  const r = resumen(m), base = r.inU > 0 ? r.inU : ingresoPlan(), pend = sum(D.fijos.filter(f => !fijoPagado(f, m)), f => aUSD(f.monto, f.mon));
+  const r = resumen(m), base = r.inU > 0 ? r.inU : ingresoPlan(), pend = sum(D.fijos.filter(f => !fijoPagado(f, m) && fijoAplica(f, m)), f => aUSD(f.monto, f.mon));
   return r2(base - r.outU - pend);
 }
 
@@ -281,8 +283,7 @@ function vInicio() {
   <div class="big">${M(tU)}${tP ? ` <span style="font-size:16px">+ ${M(tP, 'PEN')}</span>` : ''}</div><div class="s">${dm.length} gasto(s)${DIA !== h ? ` · <span class="tap" style="text-decoration:underline" onclick="DIA=hoy();render()">volver a hoy</span>` : ''}</div>
   <div class="g2 mt"><button class="btn" onclick="formMov('out')">− Gasto</button><button class="btn green" onclick="formMov('in')">+ Ingreso</button></div>
   <div class="g2 mt"><button class="btn ghost sm" onclick="formDia()">🧮 Total del día</button><button class="btn ghost sm" onclick="formTr()">⇄ Transferir</button></div>
-  <div class="g2 mt"><button class="btn ghost sm" onclick="formPeru()">🇵🇪 Enviar a Perú</button><button class="btn ghost sm" onclick="formAporte()">🎯 Ahorrar en meta</button></div>
-  ${D.rapidos.length ? `<div class="s mt">Gasto rápido (hormiga):</div><div class="chips">${D.rapidos.map((q, i) => `<button class="chip" onclick="rapido(${i})">${esc(q.n)} ${M(q.m)}</button>`).join('')}</div>` : ''}</div>`;
+  <div class="g2 mt"><button class="btn ghost sm" onclick="formPeru()">🇵🇪 Enviar a Perú</button><button class="btn ghost sm" onclick="formAporte()">🎯 Ahorrar en meta</button></div></div>`;
   const av = avisos();
   if (av.length) html += `<div class="block"><h3>Avisos</h3>${av.map(([c, t]) => `<div class="aviso ${c}">${esc(t)}</div>`).join('')}</div>`;
   const bal = r.inU - r.outU;
@@ -669,7 +670,7 @@ function borrarMeta(id) {
 }
 
 /* ===================== MÁS ===================== */
-const SECS = [['plan','📊 Plan y regla de ahorro'],['fijos','📅 Pagos fijos y deudas'],['prios','⭐ Prioridades del mes'],['tarjetas','💳 Tarjetas de crédito'],['vanta','👜 Vanta'],['presu','🎯 Presupuesto por categoría'],['cats','🏷️ Categorías'],['rapidos','⚡ Gastos rápidos'],['tc','💱 Tipo de cambio'],['copia','💾 Copia de seguridad']];
+const SECS = [['plan','📊 Plan y regla de ahorro'],['fijos','📅 Pagos fijos y deudas'],['prios','⭐ Prioridades del mes'],['tarjetas','💳 Tarjetas de crédito'],['vanta','👜 Vanta'],['presu','🎯 Presupuesto por categoría'],['cats','🏷️ Categorías'],['tc','💱 Tipo de cambio'],['copia','💾 Copia de seguridad']];
 function vMas() {
   if (SUB) return `<button class="back" onclick="SUB=null;render()">‹ Más</button>` + ({plan:sPlan, fijos:sFijos, prios:sPrios, tarjetas:sTarjetas, vanta:sVanta, presu:sPresu, cats:sCats, rapidos:sRapidos, tc:sTC, copia:sCopia})[SUB]();
   return `<div class="block">${SECS.map(([k, l]) => `<div class="item tap" onclick="abrirSub('${k}')"><span class="t">${l}</span><span>›</span></div>`).join('')}</div>`;
@@ -705,12 +706,12 @@ function sFijos() {
   const tot = sum(D.fijos, f => aUSD(f.monto, f.mon)), pag = sum(D.fijos.filter(f => fijoPagado(f, m)), f => aUSD(f.monto, f.mon));
   let html = `<div class="block"><h3><span>Pagos fijos mensuales</span><button class="mini" onclick="formFijo()">+ Nuevo</button></h3>
   ${D.fijos.length ? `<div class="s">Total: ${M(tot)} al mes · Pagado en ${nomMes(m)}: ${M(pag)}</div>${bar(tot ? pag / tot * 100 : 0, 'var(--ok)')}` : ''}
-  ${[...D.fijos].sort((a, b) => n(a.dia) - n(b.dia)).map(f => { const ok = fijoPagado(f, m); return `<div class="item"><div class="tap" onclick="formFijo('${f.id}')"><div class="t">${esc(f.n)} <span class="tag">${GRUPOS[f.g] || ''}</span></div><div class="s">Día ${f.dia || '-'} · ${M(f.monto, f.mon)}</div></div>${ok ? '<b class="pos">✓ Pagado</b>' : `<button class="mini" onclick="pagarFijo('${f.id}')">Pagar</button>`}</div>`; }).join('') || '<div class="empty">Agrega renta, luz, teléfono, seguro, internet, suscripciones…</div>'}</div>`;
+  ${[...D.fijos].sort((a, b) => n(a.dia) - n(b.dia)).map(f => { const ok = fijoPagado(f, m); return `<div class="item"><div class="tap" onclick="formFijo('${f.id}')"><div class="t">${esc(f.n)} <span class="tag">${GRUPOS[f.g] || ''}</span></div><div class="s">Día ${f.dia || '-'} · ${M(f.monto, f.mon)}${cuenta(f.cuenta) ? ' · sale de ' + esc(cuenta(f.cuenta).n) : ''}</div></div>${ok ? '<b class="pos">✓ Pagado</b>' : !fijoAplica(f, m) ? '<span class="s">Desde el próximo mes</span>' : `<button class="mini" onclick="pagarFijo('${f.id}')">Pagar</button>`}</div>`; }).join('') || '<div class="empty">Agrega renta, luz, teléfono, seguro, internet, suscripciones…</div>'}</div>`;
   html += `<div class="block"><h3><span>Deudas</span><button class="mini" onclick="formDeuda()">+ Nueva</button></h3>${D.deudas.map(d => { const act = deudaActual(d), p = n(d.saldo) ? (1 - act / n(d.saldo)) * 100 : 0; return `<div style="padding:8px 0;border-bottom:1px dashed var(--line)"><div class="row tap" style="border:0;padding:0" onclick="formDeuda('${d.id}')"><b>${esc(d.n)}</b><span>Debes ${M(act, d.mon)}</span></div>${bar(p, 'var(--ok)')}<div class="s">Pagado ${Math.round(p)}% de ${M(d.saldo, d.mon)}${n(d.cuota) ? ' · cuota ' + M(d.cuota, d.mon) + (act > 0 ? ' · faltan ~' + Math.ceil(act / n(d.cuota)) + ' cuotas' : '') : ''}</div>${act > 0 ? `<button class="btn sec sm mt" onclick="pagarDeuda('${d.id}')">Registrar pago</button>` : '<div class="s pos">✅ Deuda pagada</div>'}</div>`; }).join('') || '<div class="empty">Préstamos o deudas que estás pagando.</div>'}
   <div class="s mt">Las tarjetas de crédito van aparte en Tarjetas (solo revisión).</div></div>`;
   return html;
 }
-function pagarFijo(id) { const f = D.fijos.find(x => x.id === id); formMov('out', null, {cat:f.cat || 'Otros', monto:f.monto, nota:f.n, fijo:f.id, mon:f.mon}); }
+function pagarFijo(id) { const f = D.fijos.find(x => x.id === id); formMov('out', null, {cat:f.cat || 'Otros', monto:f.monto, nota:f.n, fijo:f.id, mon:f.mon, cuenta:cuenta(f.cuenta) ? f.cuenta : undefined}); }
 function pagarDeuda(id) { const d = D.deudas.find(x => x.id === id); formMov('out', null, {cat:'Deudas', monto:d.cuota || '', nota:'Pago ' + d.n, deuda:d.id, mon:d.mon}); }
 function formFijo(id) {
   const f = id ? D.fijos.find(x => x.id === id) : {mon:'USD', g:'nec'};
@@ -718,6 +719,7 @@ function formFijo(id) {
   <label>Nombre</label><input id="xN" value="${esc(f.n || '')}" placeholder="Ej: Renta, Luz, Celular">
   <div class="g2"><div><label>Monto</label><input id="xM" type="number" inputmode="decimal" step="0.01" value="${f.monto ?? ''}"></div><div><label>Moneda</label><select id="xMon"><option value="USD" ${f.mon === 'USD' ? 'selected' : ''}>$</option><option value="PEN" ${f.mon === 'PEN' ? 'selected' : ''}>S/</option></select></div></div>
   <label>Día de pago (1-31)</label><input id="xD" type="number" inputmode="numeric" value="${f.dia ?? ''}">
+  <label>¿De qué cuenta sale?</label><select id="xCu"><option value="">Elegir al pagar</option>${optCuentas(f.cuenta)}</select>
   <label>Tipo</label><select id="xG">${['nec', 'gus', 'deu'].map(k => `<option value="${k}" ${f.g === k ? 'selected' : ''}>${GRUPOS[k]}</option>`).join('')}</select>
   <label>Categoría del gasto</label><select id="xC">${D.cats.gasto.map(c => `<option ${c.n === f.cat ? 'selected' : ''}>${esc(c.n)}</option>`).join('')}</select>
   <button class="btn mt" onclick="guardarFijo('${id || ''}')">Guardar</button>
@@ -726,8 +728,8 @@ function formFijo(id) {
 function guardarFijo(id) {
   const nom = $('#xN').value.trim(), monto = r2($('#xM').value); if (!nom || monto <= 0) return toast('Escribe nombre y monto', 'warn');
   const f = id ? D.fijos.find(x => x.id === id) : {id:uid()};
-  Object.assign(f, {n:nom, monto, mon:$('#xMon').value, dia:Math.round(n($('#xD').value)) || 1, g:$('#xG').value, cat:$('#xC').value});
-  if (!id) D.fijos.push(f); guardar(); cerrar(); render(); toast('Guardado');
+  Object.assign(f, {n:nom, monto, mon:$('#xMon').value, dia:Math.round(n($('#xD').value)) || 1, g:$('#xG').value, cat:$('#xC').value, cuenta:$('#xCu').value});
+  if (!id) { f.desde = hoy(); D.fijos.push(f); } guardar(); cerrar(); render(); toast('Guardado');
 }
 function formDeuda(id) {
   const d = id ? D.deudas.find(x => x.id === id) : {mon:'USD'};
